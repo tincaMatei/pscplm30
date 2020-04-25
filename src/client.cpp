@@ -1,5 +1,18 @@
 #include <SDL2/SDL.h>
 #include "colorpicker.h"
+#include <enet/enet.h>
+
+void initENET() {
+	if(enet_initialize() < 0) {
+		fprintf(stderr, "Enet failed to initialize\n");
+		exit(EXIT_FAILURE);
+	}
+	fprintf(stderr, "Enet initialized succesfully\n");
+}
+
+void deinitENET() {
+	enet_deinitialize();
+}
 
 SDL_Window* window;
 SDL_Renderer* renderer;
@@ -64,6 +77,13 @@ template<typename T>
 void readNumber(unsigned char* &data, T &x) {
   // bruh
   x = static_cast<T*>(static_cast<void*>(data))[0];
+  data = data + sizeof(T);
+}
+
+template<typename T>
+void writeNumber(unsigned char* &data, T &x) {
+  // bruh
+  static_cast<T*>(static_cast<void*>(data))[0] = x;
   data = data + sizeof(T);
 }
 
@@ -132,6 +152,7 @@ public:
   }
 };
 
+ENetPeer* peer;
 class Camera {
 private:
   float x, y;
@@ -183,8 +204,25 @@ public:
          0 <= yMouse && yMouse < canvas->getHeight()) {
         if(pipette)
           color = canvas->getPixel(xMouse, yMouse);
-        else
+        else {
+          short lPixel = yMouse, cPixel = xMouse;
           canvas->setPixel(xMouse, yMouse, color);
+          unsigned char* packetsend = new unsigned char[sizeof(short) * 2 +
+                                                        sizeof(unsigned char) * 3];
+          unsigned char* pnt = packetsend;
+          
+          writeNumber(pnt, lPixel);
+          writeNumber(pnt, cPixel);
+          writeNumber(pnt, color.r);
+          writeNumber(pnt, color.g);
+          writeNumber(pnt, color.b);
+          
+          ENetPacket* packet = enet_packet_create(packetsend,
+                                                  sizeof(short) * 2 +
+                                                  sizeof(unsigned char) * 3,
+                                                  ENET_PACKET_FLAG_RELIABLE);
+          enet_peer_send(peer, 0, packet);
+        }
       }
     } else if(pressing) {
       int xd = SCREEN_WIDTH / 2 - xMouse,
@@ -279,18 +317,95 @@ public:
 
 int main() {
   initSDL();
+  initENET();
   
-  Canvas* canvas = new Canvas(NULL);
+	ENetHost* client;
+	
+	client = enet_host_create(NULL, 1, 2, 0, 0);
+  
+  if(client == NULL) {
+		fprintf(stderr, "Failed to create client\n");
+		exit(EXIT_FAILURE);
+	}
+  
+  ENetAddress address;
+	ENetEvent enetevent;
+	
+	enet_address_set_host(&address, "localhost");
+	address.port = 9999;
+  
+	peer = enet_host_connect(client, &address, 2, 0);
+
+	if(peer == NULL) {
+		fprintf(stderr, "No available peers for initiating an ENet connection.\n");
+		exit(EXIT_FAILURE);
+	}
+  
+	fprintf(stderr, "Created peer successfully.\n");
+	enet_host_service(client, NULL, 0);
+  
+  Canvas* canvas = NULL;
+  
+  if(enet_host_service(client, &enetevent, 1000) && enetevent.type == ENET_EVENT_TYPE_CONNECT) {
+		fprintf(stderr, "Connection to server succeeded.\n");
+
+    fprintf(stderr, "Loading map:\n");
+    
+    if(enet_host_service(client, &enetevent, 10000) > 0) {
+      canvas = new Canvas(enetevent.packet->data);
+      fprintf(stderr, "Loaded map successfuly\n");
+    }
+	} else {
+		enet_peer_reset(peer);
+		fprintf(stderr, "Connection to server failed.\n");
+	  enet_host_destroy(client);
+    exit(EXIT_FAILURE);
+	}
+  
   Camera* camera = new Camera(canvas, 0, 0);
   
   SDL_Event event;
   bool quit = false;
   
   while(!quit) {
-    while(SDL_PollEvent(&event)) {
-      if(event.type == SDL_QUIT)
+    while(!quit && enet_host_service(client, &enetevent, 0) > 0) {
+      if(enetevent.type == ENET_EVENT_TYPE_RECEIVE) {
+        unsigned char* packetdata = enetevent.packet->data;
+        short lPixel, cPixel;
+        Pixel newPixel;
+        
+        readNumber(packetdata, lPixel);
+        readNumber(packetdata, cPixel);
+        readNumber(packetdata, newPixel.r);
+        readNumber(packetdata, newPixel.g);
+        readNumber(packetdata, newPixel.b);
+      
+        canvas->setPixel(cPixel, lPixel, newPixel);
+        
+        enet_packet_destroy(enetevent.packet);
+      } else if(enetevent.type == ENET_EVENT_TYPE_DISCONNECT) {
+        fprintf(stderr, "Disconnected from server\n");
         quit = true;
-      else if(event.type == SDL_MOUSEBUTTONDOWN)
+      }
+    }
+    while(SDL_PollEvent(&event)) {
+      if(event.type == SDL_QUIT) {
+        quit = true;
+		    enet_peer_disconnect(peer, 0);
+        bool disconnect = false;
+        while(!disconnect && enet_host_service(client, &enetevent, 2000) > 0) {
+          if(enetevent.type == ENET_EVENT_TYPE_DISCONNECT) {
+            fprintf(stderr, "Disconnected succesfully from server\n");
+            disconnect = true;
+          } else if(enetevent.type == ENET_EVENT_TYPE_RECEIVE)
+            enet_packet_destroy(enetevent.packet);
+        }
+        
+        if(!disconnect) {
+          fprintf(stderr, "Disconnected forcefuly from server\n");
+          enet_peer_reset(peer);
+        }
+      } else if(event.type == SDL_MOUSEBUTTONDOWN)
         camera->mousePress(event.button.button);
       else if(event.type == SDL_MOUSEBUTTONUP)
         camera->mouseRelease(event.button.button);
@@ -314,6 +429,9 @@ int main() {
     SDL_Delay(10);
   }
   
+	enet_host_destroy(client);
+  
+  deinitENET();
   deinitSDL();
   return 0;
 }

@@ -19,7 +19,7 @@ SDIR=src
 TESTDIR=tests
 
 # Compilation flags
-FLAGS=-Wall -std=c++17 -O2 -I $(IDIR) -lSDL2 -lSDL2_ttf -lSDL2_image -lSDL2_mixer
+FLAGS=-Wall -std=c++17 -O2 -I $(IDIR) -lSDL2 -lSDL2_ttf -lSDL2_image -lSDL2_mixer -lenet
 
 # List of all sources and objects
 SRC=$(shell find $(SDIR) -type f -name *.$(SRCEXT))
@@ -44,17 +44,13 @@ pscplm30-client: $(BASEOBJ) pscplm30-client.o
 # Server
 SERVERSRC=src/server.cpp
 
-pscplm-server.o: $(SERVERSRC)
+pscplm30-server.o: $(SERVERSRC)
 	@$(CC) -c -o $@ $^ $(FLAGS)
 	
 pscplm30-server: $(BASEOBJ) pscplm30-server.o
 	@$(CC) -o $@ $^ $(FLAGS)
 
 .PHONY: clean
-.PHONY: echoSymbols
 
 clean:
-	rm $(shell find $(ODIR) -type f -name *.o)
-
-echoSymbols:
-	@echo $(BASEOBJ)
+	@rm $(shell find $(ODIR) -type f -name *.o)
