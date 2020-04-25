@@ -2,6 +2,8 @@
 #include "colorpicker.h"
 #include <enet/enet.h>
 
+const char* IP_ADDRESS = "localhost";
+
 void initENET() {
 	if(enet_initialize() < 0) {
 		fprintf(stderr, "Enet failed to initialize\n");
@@ -331,7 +333,7 @@ int main() {
   ENetAddress address;
 	ENetEvent enetevent;
 	
-	enet_address_set_host(&address, "localhost");
+	enet_address_set_host(&address, IP_ADDRESS);
 	address.port = 9999;
   
 	peer = enet_host_connect(client, &address, 2, 0);
